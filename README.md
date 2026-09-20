@@ -12,6 +12,7 @@ Lantern Photos turns a folder on your Mac Mini into a private, comfortable photo
 - Fits phones, tablets, laptops, and desktops
 - Can be protected with a shared password
 - Runs entirely on your Mac Mini and local network
+- Includes a native iPhone companion for resumable, differential photo sync
 
 ## Install on the Mac Mini
 
@@ -47,6 +48,22 @@ npm run service:remove
 ```
 
 The Mac Mini must be awake for other devices to reach it. In **System Settings → Energy**, enable the option that prevents automatic sleeping when the display is off.
+
+## Sync from an iPhone
+
+Lantern includes a native iPhone companion because iOS does not let a website scan the complete Photos library. The companion asks for Full Photos Access and performs a differential sync only when you tap **Sync new photos**.
+
+It compares stable Photos asset identifiers and edit timestamps with a hidden index on the Mac Mini. Unrecognized photos are fingerprinted before upload, so an identical file already in the exposed folder is indexed without transferring it again. Interrupted runs resume safely, and subsequent runs send only new or edited photos.
+
+The iPhone project is at `ios/LanternSync/LanternSync.xcodeproj`. Follow [the iPhone installation guide](ios/README.md) to install it directly with Xcode.
+
+Synced photos are organized under `iPhone Uploads/YYYY/MM` by default. To choose another subfolder, add this to `.env` before starting the server:
+
+```ini
+SYNC_FOLDER=From iPhone
+```
+
+When an iPhone edit creates a newer version of a previously synced asset, Lantern replaces the library copy and keeps the prior version in `.photo-vault-trash` for recovery. Removing a photo from the iPhone never removes the Mac copy.
 
 ## Add a password
 
@@ -101,4 +118,4 @@ The interface runs at `http://localhost:5173` and the local API at `http://local
 
 ## Current boundaries
 
-The first release manages image files only. It does not yet include video playback, duplicate detection, face recognition, cloud backup, or a graphical Recently Deleted screen. The Git history is the intended place to grow those features safely.
+The first release manages image files only. The native companion does not yet transfer videos or the motion component of Live Photos. It also does not include face recognition, cloud backup, or a graphical Recently Deleted screen. The Git history is the intended place to grow those features safely.

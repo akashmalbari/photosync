@@ -5,3 +5,5 @@ dist/
 coverage/
 *.log
 .photo-vault-trash/
+**/xcuserdata/
+*.xcuserstate
