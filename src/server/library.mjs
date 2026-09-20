@@ -41,6 +41,15 @@ export function localNetworkHostName(hostName) {
   return `${base}.local`
 }
 
+export function isLoopbackAddress(address) {
+  const value = String(address || '').trim().toLowerCase()
+  return value === 'localhost' || value === '::1' || value.startsWith('127.') || value.startsWith('::ffff:127.')
+}
+
+export function requiresNetworkPassword(password, address) {
+  return Boolean(password) && !isLoopbackAddress(address)
+}
+
 export function encodePhotoId(relativePath) {
   return Buffer.from(relativePath, 'utf8').toString('base64url')
 }

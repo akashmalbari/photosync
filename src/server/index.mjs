@@ -17,6 +17,7 @@ import {
   moveToTrash,
   photoRecord,
   resolveLibraryPath,
+  requiresNetworkPassword,
   sanitizeNewName,
 } from './library.mjs'
 
@@ -29,6 +30,7 @@ const libraries = librariesFromEnvironment(process.env)
 const password = process.env.LIBRARY_PASSWORD || ''
 const authToken = password ? crypto.createHash('sha256').update(`lantern:${password}`).digest('hex') : ''
 const networkHostName = localNetworkHostName(os.hostname())
+const expiredAccessCookie = 'lantern_access=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0'
 
 app.disable('x-powered-by')
 app.use(compression())
@@ -52,7 +54,7 @@ function libraryForRequest(req) {
 }
 
 function authorized(req, res, next) {
-  if (!password) return next()
+  if (!requiresNetworkPassword(password, req.socket.remoteAddress)) return next()
   const cookies = Object.fromEntries(String(req.get('cookie') || '').split(';').map((value) => value.trim().split('=')))
   const supplied = req.get('X-Library-Password')
   if (supplied !== password && cookies.lantern_access !== authToken) {
@@ -90,7 +92,7 @@ app.get('/api/status', async (_req, res) => {
 })
 
 app.post('/api/unlock', (req, res) => {
-  if (!password || req.body.password === password) {
+  if (!requiresNetworkPassword(password, req.socket.remoteAddress) || req.body.password === password) {
     res.setHeader('Set-Cookie', `lantern_access=${authToken}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000`)
     return res.status(204).end()
   }
@@ -98,7 +100,7 @@ app.post('/api/unlock', (req, res) => {
 })
 
 app.post('/api/lock', (_req, res) => {
-  res.setHeader('Set-Cookie', 'lantern_access=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0')
+  res.setHeader('Set-Cookie', expiredAccessCookie)
   res.status(204).end()
 })
 
@@ -215,7 +217,12 @@ app.post('/api/photos/bulk-delete', configured, async (req, res) => {
 if (process.env.NODE_ENV === 'production') {
   const distPath = path.resolve('dist')
   app.use(express.static(distPath, { maxAge: '1h', index: false }))
-  app.get('*splat', (_req, res) => res.sendFile(path.join(distPath, 'index.html')))
+  app.get('*splat', (req, res) => {
+    const acceptsHtml = String(req.get('accept') || '').toLowerCase().includes('text/html')
+    if (acceptsHtml && requiresNetworkPassword(password, req.socket.remoteAddress)) res.setHeader('Set-Cookie', expiredAccessCookie)
+    res.setHeader('Cache-Control', 'no-store')
+    res.sendFile(path.join(distPath, 'index.html'))
+  })
 }
 
 app.listen(port, host, (error) => {

@@ -59,10 +59,10 @@ The Mac Mini must be awake for other devices to reach it. In **System Settings â
 
 ## Add a password
 
-Your home network is the boundary by default. To require a shared password, open `.env` and add:
+Your home network is the boundary by default. To require a shared password on phones and other network devices, open `.env` and add:
 
 ```ini
-LIBRARY_PASSWORD=replace-this-with-a-long-password
+LIBRARY_PASSWORD="replace-this-with-a-long-password"
 ```
 
 Restart Lantern Photos after changing `.env`. If you installed the login service, the easiest restart is:
@@ -70,6 +70,8 @@ Restart Lantern Photos after changing `.env`. If you installed the login service
 ```sh
 npm run service:install
 ```
+
+Network devices are asked for the password again whenever the Lantern page is loaded or refreshed. Direct `http://localhost:4173` access on the Mac Mini remains password-free. The password protects the app only on your trusted home network; it does not make the HTTP connection suitable for exposing to the public internet.
 
 Do not expose port 4173 directly to the public internet. This version is designed for a trusted home network.
 

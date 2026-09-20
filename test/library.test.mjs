@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import path from 'node:path'
-import { decodePhotoId, encodePhotoId, isInside, librariesFromEnvironment, localNetworkHostName, resolveLibraryPath, sanitizeNewName } from '../src/server/library.mjs'
+import { decodePhotoId, encodePhotoId, isInside, isLoopbackAddress, librariesFromEnvironment, localNetworkHostName, requiresNetworkPassword, resolveLibraryPath, sanitizeNewName } from '../src/server/library.mjs'
 
 test('photo IDs round-trip unicode paths', () => {
   const value = 'Trips/José/IMG 001.jpg'
@@ -28,6 +28,18 @@ test('local network hostname has exactly one .local suffix', () => {
   assert.equal(localNetworkHostName('akashs-mac-mini'), 'akashs-mac-mini.local')
   assert.equal(localNetworkHostName('akashs-mac-mini.local'), 'akashs-mac-mini.local')
   assert.equal(localNetworkHostName('akashs-mac-mini.local.local'), 'akashs-mac-mini.local')
+})
+
+test('only loopback connections qualify for password-free local access', () => {
+  assert.equal(isLoopbackAddress('127.0.0.1'), true)
+  assert.equal(isLoopbackAddress('127.0.0.42'), true)
+  assert.equal(isLoopbackAddress('::1'), true)
+  assert.equal(isLoopbackAddress('::ffff:127.0.0.1'), true)
+  assert.equal(isLoopbackAddress('192.168.1.50'), false)
+  assert.equal(isLoopbackAddress('::ffff:192.168.1.50'), false)
+  assert.equal(requiresNetworkPassword('shared-secret', '192.168.1.50'), true)
+  assert.equal(requiresNetworkPassword('shared-secret', '127.0.0.1'), false)
+  assert.equal(requiresNetworkPassword('', '192.168.1.50'), false)
 })
 
 test('photo sources are ordered, named, and de-duplicated', () => {
