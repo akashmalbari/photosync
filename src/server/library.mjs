@@ -7,7 +7,6 @@ export const IMAGE_EXTENSIONS = new Set([
 ])
 
 export const TRASH_FOLDER = '.photo-vault-trash'
-export const SYNC_INDEX_FILE = '.lantern-sync-index.json'
 
 export function localNetworkHostName(hostName) {
   const base = String(hostName || 'localhost').replace(/(?:\.local)+\.?$/i, '')
@@ -53,13 +52,6 @@ export function sanitizeNewName(rawName, currentExtension = '') {
   if (currentExtension && suppliedExtension.toLowerCase() !== currentExtension.toLowerCase()) {
     throw new Error(`Keep the ${currentExtension} file extension`)
   }
-  return name
-}
-
-export function sanitizeUploadName(rawName) {
-  const name = sanitizeNewName(rawName)
-  const extension = path.extname(name).toLowerCase()
-  if (!IMAGE_EXTENSIONS.has(extension)) throw new Error('Unsupported image format')
   return name
 }
 
@@ -131,60 +123,4 @@ export async function fileExists(filePath) {
   } catch {
     return false
   }
-}
-
-export async function hashFile(filePath) {
-  const hash = crypto.createHash('sha256')
-  const handle = await fs.open(filePath, 'r')
-  try {
-    for await (const chunk of handle.createReadStream()) hash.update(chunk)
-    return hash.digest('hex')
-  } finally {
-    await handle.close().catch(() => {})
-  }
-}
-
-export async function findPhotoByHash(root, digest, size, excludeRelativePath = '') {
-  const photos = await listPhotos(root)
-  for (const photo of photos) {
-    if (photo.path === excludeRelativePath || photo.size !== size) continue
-    const candidate = resolveLibraryPath(root, photo.path)
-    if (await hashFile(candidate) === digest) return photo
-  }
-  return null
-}
-
-export async function uniqueFilePath(folder, fileName) {
-  const extension = path.extname(fileName)
-  const stem = path.basename(fileName, extension)
-  let candidate = path.join(folder, fileName)
-  let copy = 2
-  while (await fileExists(candidate)) {
-    candidate = path.join(folder, `${stem} (${copy})${extension}`)
-    copy += 1
-  }
-  return candidate
-}
-
-export function syncAssetKey(deviceId, assetId) {
-  return crypto.createHash('sha256').update(`${deviceId}\0${assetId}`).digest('hex')
-}
-
-export async function readSyncIndex(root) {
-  const indexPath = path.join(root, SYNC_INDEX_FILE)
-  try {
-    const parsed = JSON.parse(await fs.readFile(indexPath, 'utf8'))
-    if (!parsed || parsed.version !== 1 || typeof parsed.assets !== 'object') throw new Error('Invalid sync index')
-    return parsed
-  } catch (error) {
-    if (error.code === 'ENOENT') return { version: 1, assets: {} }
-    throw new Error('Sync index could not be read')
-  }
-}
-
-export async function writeSyncIndex(root, index) {
-  const destination = path.join(root, SYNC_INDEX_FILE)
-  const temporary = path.join(root, `${SYNC_INDEX_FILE}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`)
-  await fs.writeFile(temporary, `${JSON.stringify(index, null, 2)}\n`, { mode: 0o600 })
-  await fs.rename(temporary, destination)
 }

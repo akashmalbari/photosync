@@ -3,8 +3,6 @@ import os from 'node:os'
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import fsSync from 'node:fs'
-import { Transform } from 'node:stream'
-import { pipeline } from 'node:stream/promises'
 import express from 'express'
 import compression from 'compression'
 import dotenv from 'dotenv'
@@ -12,21 +10,14 @@ import sharp from 'sharp'
 import archiver from 'archiver'
 import {
   decodePhotoId,
-  findPhotoByHash,
   fileExists,
-  IMAGE_EXTENSIONS,
   localNetworkHostName,
   listPhotos,
   mediaTypeFor,
   moveToTrash,
   photoRecord,
-  readSyncIndex,
   resolveLibraryPath,
   sanitizeNewName,
-  sanitizeUploadName,
-  syncAssetKey,
-  uniqueFilePath,
-  writeSyncIndex,
 } from './library.mjs'
 
 dotenv.config()
@@ -38,9 +29,6 @@ const libraryPath = process.env.PHOTO_LIBRARY_PATH ? path.resolve(process.env.PH
 const password = process.env.LIBRARY_PASSWORD || ''
 const authToken = password ? crypto.createHash('sha256').update(`lantern:${password}`).digest('hex') : ''
 const networkHostName = localNetworkHostName(os.hostname())
-const syncFolder = process.env.SYNC_FOLDER || 'iPhone Uploads'
-const maxUploadBytes = Math.max(10, Number(process.env.MAX_UPLOAD_MB || 500)) * 1024 * 1024
-let syncIndexQueue = Promise.resolve()
 
 app.disable('x-powered-by')
 app.use(compression())
@@ -67,55 +55,9 @@ function authorized(req, res, next) {
 }
 
 function apiError(res, error, fallback = 'That action could not be completed') {
-  const known = ['Invalid', 'Enter a', 'File name', 'Keep the', 'Unsupported', 'Upload', 'Sync', 'already exists', 'not found']
+  const known = ['Invalid', 'Enter a', 'File name', 'Keep the', 'already exists', 'not found']
   const message = known.some((prefix) => error.message?.includes(prefix)) ? error.message : fallback
-  return res.status(error.statusCode || (message.includes('not found') ? 404 : 400)).json({ error: message })
-}
-
-function withSyncIndex(operation) {
-  const result = syncIndexQueue.then(operation, operation)
-  syncIndexQueue = result.catch(() => {})
-  return result
-}
-
-function requireText(value, label, maxLength = 500) {
-  const text = String(value || '').trim()
-  if (!text || text.length > maxLength || text.includes('\0')) throw new Error(`Invalid ${label}`)
-  return text
-}
-
-function validateDigest(value) {
-  const digest = String(value || '').toLowerCase()
-  if (!/^[a-f0-9]{64}$/.test(digest)) throw new Error('Invalid photo fingerprint')
-  return digest
-}
-
-function uploadFolderFor(createdAt) {
-  const date = new Date(createdAt)
-  const safeDate = Number.isNaN(date.getTime()) ? new Date() : date
-  const year = String(safeDate.getUTCFullYear())
-  const month = String(safeDate.getUTCMonth() + 1).padStart(2, '0')
-  return resolveLibraryPath(libraryPath, path.join(syncFolder, year, month))
-}
-
-function syncRecord({ deviceId, assetId, assetVersion, relativePath, digest, size, createdAt }) {
-  return {
-    deviceId, assetId, assetVersion, path: relativePath, hash: digest, size,
-    createdAt: createdAt || null,
-    syncedAt: new Date().toISOString(),
-  }
-}
-
-async function registerSyncedAsset(details, photo) {
-  await withSyncIndex(async () => {
-    const index = await readSyncIndex(libraryPath)
-    index.assets[syncAssetKey(details.deviceId, details.assetId)] = syncRecord({
-      ...details,
-      relativePath: photo.path,
-      size: photo.size,
-    })
-    await writeSyncIndex(libraryPath, index)
-  })
+  return res.status(message.includes('not found') ? 404 : 400).json({ error: message })
 }
 
 app.get('/api/status', async (_req, res) => {
@@ -150,141 +92,7 @@ app.post('/api/lock', (_req, res) => {
   res.status(204).end()
 })
 
-app.use(['/api/photos', '/api/sync', '/media'], authorized)
-
-app.get('/api/sync/status', configured, async (_req, res) => {
-  try {
-    const index = await readSyncIndex(libraryPath)
-    res.json({
-      ready: true,
-      indexedAssets: Object.keys(index.assets).length,
-      destination: syncFolder,
-      maxUploadBytes,
-    })
-  } catch (error) {
-    apiError(res, error, 'Sync status could not be read')
-  }
-})
-
-app.post('/api/sync/check', configured, async (req, res) => {
-  try {
-    const deviceId = requireText(req.body.deviceId, 'device identifier', 120)
-    const assets = Array.isArray(req.body.assets) ? req.body.assets.slice(0, 500) : []
-    if (!assets.length) return res.json({ missing: [] })
-    const index = await readSyncIndex(libraryPath)
-    const missing = []
-    for (const asset of assets) {
-      const assetId = requireText(asset.assetId, 'asset identifier')
-      const assetVersion = requireText(asset.assetVersion, 'asset version', 120)
-      const existing = index.assets[syncAssetKey(deviceId, assetId)]
-      let isCurrent = false
-      if (existing && existing.assetVersion === assetVersion) {
-        try {
-          const stat = await fs.stat(resolveLibraryPath(libraryPath, existing.path))
-          isCurrent = stat.size === existing.size
-        } catch {}
-      }
-      if (!isCurrent) {
-        missing.push(assetId)
-      }
-    }
-    res.json({ missing })
-  } catch (error) {
-    apiError(res, error, 'The sync comparison could not be completed')
-  }
-})
-
-app.post('/api/sync/content-check', configured, async (req, res) => {
-  try {
-    const deviceId = requireText(req.body.deviceId, 'device identifier', 120)
-    const assetId = requireText(req.body.assetId, 'asset identifier')
-    const assetVersion = requireText(req.body.assetVersion, 'asset version', 120)
-    const digest = validateDigest(req.body.hash)
-    const size = Number(req.body.size)
-    if (!Number.isSafeInteger(size) || size <= 0 || size > maxUploadBytes) throw new Error('Invalid photo size')
-    const duplicate = await findPhotoByHash(libraryPath, digest, size)
-    if (!duplicate) return res.json({ needed: true })
-    await registerSyncedAsset({ deviceId, assetId, assetVersion, digest, createdAt: req.body.createdAt }, duplicate)
-    res.json({ needed: false, status: 'already-present', photo: duplicate })
-  } catch (error) {
-    apiError(res, error, 'The photo could not be compared with the library')
-  }
-})
-
-app.post('/api/sync/upload', configured, async (req, res) => {
-  let temporaryPath = ''
-  try {
-    const deviceId = requireText(req.get('X-Device-ID'), 'device identifier', 120)
-    const assetId = decodeURIComponent(requireText(req.get('X-Asset-ID'), 'asset identifier'))
-    const assetVersion = requireText(req.get('X-Asset-Version'), 'asset version', 120)
-    const expectedDigest = validateDigest(req.get('X-Photo-SHA256'))
-    const createdAt = req.get('X-Created-At') || ''
-    const rawName = decodeURIComponent(requireText(req.get('X-File-Name'), 'file name', 700))
-    const fileName = sanitizeUploadName(rawName)
-    const declaredSize = Number(req.get('content-length'))
-    if (Number.isFinite(declaredSize) && declaredSize > maxUploadBytes) {
-      const error = new Error(`Upload exceeds the ${Math.round(maxUploadBytes / 1024 / 1024)} MB limit`)
-      error.statusCode = 413
-      throw error
-    }
-
-    const temporaryFolder = path.join(libraryPath, '.lantern-uploading')
-    await fs.mkdir(temporaryFolder, { recursive: true })
-    temporaryPath = path.join(temporaryFolder, `${crypto.randomUUID()}${path.extname(fileName).toLowerCase()}`)
-    const hash = crypto.createHash('sha256')
-    let received = 0
-    const meter = new Transform({
-      transform(chunk, _encoding, callback) {
-        received += chunk.length
-        if (received > maxUploadBytes) return callback(new Error(`Upload exceeds the ${Math.round(maxUploadBytes / 1024 / 1024)} MB limit`))
-        hash.update(chunk)
-        callback(null, chunk)
-      },
-    })
-    await pipeline(req, meter, fsSync.createWriteStream(temporaryPath, { flags: 'wx', mode: 0o600 }))
-    if (!received) throw new Error('Upload was empty')
-    const digest = hash.digest('hex')
-    if (digest !== expectedDigest) throw new Error('Upload fingerprint did not match')
-
-    const metadata = await sharp(temporaryPath, { animated: false, limitInputPixels: 150_000_000 }).metadata()
-    if (!metadata.format || !IMAGE_EXTENSIONS.has(path.extname(fileName).toLowerCase())) throw new Error('Unsupported image format')
-
-    const duplicate = await findPhotoByHash(libraryPath, digest, received)
-    if (duplicate) {
-      await fs.rm(temporaryPath, { force: true })
-      temporaryPath = ''
-      await registerSyncedAsset({ deviceId, assetId, assetVersion, digest, createdAt }, duplicate)
-      return res.json({ status: 'already-present', photo: duplicate })
-    }
-
-    const key = syncAssetKey(deviceId, assetId)
-    const index = await readSyncIndex(libraryPath)
-    const previous = index.assets[key]
-    const destinationFolder = uploadFolderFor(createdAt)
-    await fs.mkdir(destinationFolder, { recursive: true })
-    let destination
-    if (previous?.path && path.extname(previous.path).toLowerCase() === path.extname(fileName).toLowerCase()) {
-      const previousPath = resolveLibraryPath(libraryPath, previous.path)
-      const sharedByAnotherAsset = Object.entries(index.assets).some(([otherKey, record]) => otherKey !== key && record.path === previous.path)
-      if (!sharedByAnotherAsset && await fileExists(previousPath)) {
-        await moveToTrash(libraryPath, previous.path)
-        destination = previousPath
-      }
-    }
-    destination ||= await uniqueFilePath(destinationFolder, fileName)
-    await fs.rename(temporaryPath, destination)
-    temporaryPath = ''
-    const captureDate = new Date(createdAt)
-    if (!Number.isNaN(captureDate.getTime())) await fs.utimes(destination, captureDate, captureDate)
-    const stat = await fs.stat(destination)
-    const photo = photoRecord(path.relative(libraryPath, destination), stat)
-    await registerSyncedAsset({ deviceId, assetId, assetVersion, digest, createdAt }, photo)
-    res.status(201).json({ status: previous ? 'updated' : 'uploaded', photo })
-  } catch (error) {
-    if (temporaryPath) await fs.rm(temporaryPath, { force: true }).catch(() => {})
-    apiError(res, error, 'The photo could not be synced')
-  }
-})
+app.use(['/api/photos', '/media'], authorized)
 
 app.get('/api/photos', configured, async (req, res) => {
   try {
