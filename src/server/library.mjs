@@ -8,6 +8,11 @@ export const IMAGE_EXTENSIONS = new Set([
 
 export const TRASH_FOLDER = '.photo-vault-trash'
 
+export function localNetworkHostName(hostName) {
+  const base = String(hostName || 'localhost').replace(/(?:\.local)+\.?$/i, '')
+  return `${base}.local`
+}
+
 export function encodePhotoId(relativePath) {
   return Buffer.from(relativePath, 'utf8').toString('base64url')
 }

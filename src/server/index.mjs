@@ -11,6 +11,7 @@ import archiver from 'archiver'
 import {
   decodePhotoId,
   fileExists,
+  localNetworkHostName,
   listPhotos,
   mediaTypeFor,
   moveToTrash,
@@ -27,6 +28,7 @@ const host = process.env.HOST || '0.0.0.0'
 const libraryPath = process.env.PHOTO_LIBRARY_PATH ? path.resolve(process.env.PHOTO_LIBRARY_PATH) : null
 const password = process.env.LIBRARY_PASSWORD || ''
 const authToken = password ? crypto.createHash('sha256').update(`lantern:${password}`).digest('hex') : ''
+const networkHostName = localNetworkHostName(os.hostname())
 
 app.disable('x-powered-by')
 app.use(compression())
@@ -73,7 +75,7 @@ app.get('/api/status', async (_req, res) => {
     configured: Boolean(libraryPath), ready, writable,
     libraryName: libraryPath ? path.basename(libraryPath) : null,
     protected: Boolean(password),
-    hostName: os.hostname(),
+    hostName: networkHostName,
   })
 })
 
@@ -221,7 +223,7 @@ app.listen(port, host, (error) => {
   }
   console.log(`\nLantern Photos is ready:`)
   console.log(`  This Mac:     http://localhost:${port}`)
-  console.log(`  Home network: http://${os.hostname()}.local:${port}`)
+  console.log(`  Home network: http://${networkHostName}:${port}`)
   if (!libraryPath) console.log(`\nRun \"npm run setup\" to choose your photo folder.`)
   else console.log(`  Photo folder: ${libraryPath}`)
 })

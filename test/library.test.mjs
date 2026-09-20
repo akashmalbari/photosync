@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import path from 'node:path'
-import { decodePhotoId, encodePhotoId, isInside, resolveLibraryPath, sanitizeNewName } from '../src/server/library.mjs'
+import { decodePhotoId, encodePhotoId, isInside, localNetworkHostName, resolveLibraryPath, sanitizeNewName } from '../src/server/library.mjs'
 
 test('photo IDs round-trip unicode paths', () => {
   const value = 'Trips/José/IMG 001.jpg'
@@ -22,4 +22,10 @@ test('renaming keeps the original extension', () => {
   assert.throws(() => sanitizeNewName('Summer day.png', '.jpg'), /Keep the .jpg/)
   assert.throws(() => sanitizeNewName('../photo', '.jpg'), /cannot contain/)
   assert.throws(() => sanitizeNewName('.hidden', '.jpg'), /cannot start/)
+})
+
+test('local network hostname has exactly one .local suffix', () => {
+  assert.equal(localNetworkHostName('akashs-mac-mini'), 'akashs-mac-mini.local')
+  assert.equal(localNetworkHostName('akashs-mac-mini.local'), 'akashs-mac-mini.local')
+  assert.equal(localNetworkHostName('akashs-mac-mini.local.local'), 'akashs-mac-mini.local')
 })
