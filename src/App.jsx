@@ -28,6 +28,18 @@ function formatDate(value, detail = false) {
   ).format(new Date(value))
 }
 
+function libraryQuery(libraryId) {
+  return `library=${encodeURIComponent(libraryId || '')}`
+}
+
+function thumbnailUrl(photo) {
+  return `/api/photos/${photo.id}/thumbnail?size=720&${libraryQuery(photo.libraryId)}`
+}
+
+function mediaUrl(photo, download = false) {
+  return `/media/${photo.id}?${download ? 'download=1&' : ''}${libraryQuery(photo.libraryId)}`
+}
+
 async function request(url, options) {
   const response = await fetch(url, options)
   if (!response.ok) {
@@ -52,29 +64,39 @@ function Brand({ compact = false }) {
   )
 }
 
-function Sidebar({ status }) {
+function Sidebar({ status, activeLibraryId, onSelectLibrary }) {
+  const libraries = status?.libraries || []
   return (
     <aside className="sidebar">
       <Brand />
       <nav className="sidebar__nav" aria-label="Library navigation">
-        <button className="nav-item nav-item--active"><LayoutGrid size={18} /> All photos <span>01</span></button>
+        <button className="nav-item nav-item--active"><LayoutGrid size={18} /> All photos <span>{String(libraries.length || 1).padStart(2, '0')}</span></button>
         <button className="nav-item" disabled title="Coming in a future update"><Folder size={18} /> Albums</button>
         <button className="nav-item" disabled title="Open the hidden trash folder on your Mac to recover files"><ArchiveRestore size={18} /> Recently deleted</button>
       </nav>
       <div className="sidebar__rule" />
       <div className="source-block">
-        <p className="eyebrow">SOURCE</p>
-        <div className="source-block__row">
-          <span className="source-block__icon"><HardDrive size={17} /></span>
-          <span><strong>{status?.libraryName || 'Not configured'}</strong><small>This Mac Mini</small></span>
-          {status?.ready && <CheckCircle2 size={16} className="source-block__check" />}
+        <p className="eyebrow">SOURCES</p>
+        <div className="source-block__list">
+          {libraries.length ? libraries.map((library) => (
+            <button key={library.id} className={`source-block__row ${library.id === activeLibraryId ? 'source-block__row--active' : ''}`} onClick={() => onSelectLibrary(library.id)}>
+              <span className="source-block__icon"><HardDrive size={17} /></span>
+              <span><strong>{library.name}</strong><small>{library.ready ? 'This Mac Mini' : 'Folder unavailable'}</small></span>
+              {library.ready && <CheckCircle2 size={16} className="source-block__check" />}
+            </button>
+          )) : (
+            <div className="source-block__row">
+              <span className="source-block__icon"><HardDrive size={17} /></span>
+              <span><strong>Not configured</strong><small>Run setup</small></span>
+            </div>
+          )}
         </div>
       </div>
       <div className="privacy-note">
         <ShieldCheck size={18} />
         <span><strong>Stays at home</strong><small>Your originals never leave this Mac.</small></span>
       </div>
-      <p className="sidebar__foot">LANTERN v0.1</p>
+      <p className="sidebar__foot">LANTERN v0.2</p>
     </aside>
   )
 }
@@ -112,7 +134,7 @@ function PhotoCard({ photo, selected, selectionMode, onSelect, onOpen, onRename,
       <button className="photo-card__image" onClick={() => selectionMode ? onSelect(photo.id) : onOpen(photo)} aria-label={selectionMode ? `Select ${photo.name}` : `Open ${photo.name}`}>
         {!loaded && !failed && <span className="image-skeleton" />}
         {failed ? <span className="image-fallback"><ImageIcon size={30} /><small>Preview unavailable</small></span> : (
-          <img src={`/api/photos/${photo.id}/thumbnail?size=720`} alt="" loading="lazy" onLoad={() => setLoaded(true)} onError={() => setFailed(true)} />
+          <img src={thumbnailUrl(photo)} alt="" loading="lazy" onLoad={() => setLoaded(true)} onError={() => setFailed(true)} />
         )}
         <span className={`select-control ${selected ? 'select-control--checked' : ''}`} onClick={(event) => { event.stopPropagation(); onSelect(photo.id) }} role="checkbox" aria-checked={selected} tabIndex="0">
           {selected && <Check size={14} strokeWidth={3} />}
@@ -185,11 +207,11 @@ function DetailPanel({ photo, onClose, onRename, onDelete, onPrevious, onNext })
       <div className="viewer__top">
         <button className="viewer__close" onClick={onClose}><X size={20} /> Close</button>
         <p>{photo.name}</p>
-        <a className="viewer__download" href={`/media/${photo.id}?download=1`}><Download size={18} /><span>Download</span></a>
+        <a className="viewer__download" href={mediaUrl(photo, true)}><Download size={18} /><span>Download</span></a>
       </div>
       <div className="viewer__stage">
         <button className="viewer__previous" onClick={onPrevious} aria-label="Previous photo">‹</button>
-        <img src={`/media/${photo.id}`} alt={photo.name} />
+        <img src={mediaUrl(photo)} alt={photo.name} />
         <button className="viewer__next" onClick={onNext} aria-label="Next photo">›</button>
       </div>
       <aside className="viewer__info">
@@ -313,6 +335,7 @@ function BulkBar({ count, onCancel, onExport, onDelete }) {
 
 export default function App() {
   const [status, setStatus] = useState(null)
+  const [activeLibraryId, setActiveLibraryId] = useState('')
   const [photos, setPhotos] = useState([])
   const [summary, setSummary] = useState({ total: 0, totalBytes: 0 })
   const [search, setSearch] = useState('')
@@ -326,47 +349,75 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false)
   const [locked, setLocked] = useState(false)
   const [toast, setToast] = useState(null)
+  const loadRequest = useRef(0)
 
   const showToast = useCallback((message, tone = 'success') => {
     setToast({ message, tone })
     window.setTimeout(() => setToast(null), 3600)
   }, [])
 
-  const loadPhotos = useCallback(async ({ quiet = false } = {}) => {
+  const loadPhotos = useCallback(async ({ quiet = false, libraryId = activeLibraryId } = {}) => {
+    const requestId = ++loadRequest.current
+    if (!libraryId) {
+      setPhotos([])
+      setSummary({ total: 0, totalBytes: 0 })
+      setLoading(false)
+      return
+    }
     if (!quiet) setLoading(true)
     else setRefreshing(true)
     try {
       const [field, order] = sort.split(':')
-      const response = await request(`/api/photos?search=${encodeURIComponent(search)}&sort=${field}&order=${order}`)
+      const response = await request(`/api/photos?search=${encodeURIComponent(search)}&sort=${field}&order=${order}&${libraryQuery(libraryId)}`)
       const data = await response.json()
+      if (requestId !== loadRequest.current) return
       setPhotos(data.photos)
       setSummary({ total: data.total, totalBytes: data.totalBytes })
       setLocked(false)
     } catch (error) {
+      if (requestId !== loadRequest.current) return
       if (error.status === 401) setLocked(true)
       else showToast(error.message, 'error')
     } finally {
+      if (requestId !== loadRequest.current) return
       setLoading(false)
       setRefreshing(false)
     }
-  }, [search, showToast, sort])
+  }, [activeLibraryId, search, showToast, sort])
 
   useEffect(() => {
     request('/api/status').then((response) => response.json()).then((data) => {
       setStatus(data)
-      loadPhotos()
+      const available = data.libraries || []
+      setActiveLibraryId(available.find((library) => library.ready)?.id || available[0]?.id || '')
+      if (!available.length) setLoading(false)
     }).catch((error) => { setLoading(false); showToast(error.message, 'error') })
   }, []) // status is intentionally loaded once
 
   useEffect(() => {
-    if (!status || locked) return
+    if (!status || locked || !activeLibraryId) return
     const timeout = window.setTimeout(() => loadPhotos(), 220)
     return () => window.clearTimeout(timeout)
-  }, [search, sort])
+  }, [activeLibraryId, search, sort])
+
+  const activeLibrary = useMemo(
+    () => status?.libraries?.find((library) => library.id === activeLibraryId) || null,
+    [activeLibraryId, status],
+  )
+
+  const selectLibrary = (libraryId) => {
+    if (libraryId === activeLibraryId) return
+    setActiveLibraryId(libraryId)
+    setSelected(new Set())
+    setActive(null)
+    setRenaming(null)
+    setDeleting([])
+    setExporting([])
+  }
 
   const saveRename = async (photo, name) => {
     try {
-      const response = await request(`/api/photos/${photo.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
+      const response = await request(`/api/photos/${photo.id}?${libraryQuery(photo.libraryId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
       const { photo: updated } = await response.json()
       setPhotos((items) => items.map((item) => item.id === photo.id ? updated : item))
       if (active?.id === photo.id) setActive(updated)
@@ -378,8 +429,8 @@ export default function App() {
   const confirmDelete = async (items) => {
     try {
       const ids = items.map((photo) => photo.id)
-      if (ids.length === 1) await request(`/api/photos/${ids[0]}`, { method: 'DELETE' })
-      else await request('/api/photos/bulk-delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) })
+      if (ids.length === 1) await request(`/api/photos/${ids[0]}?${libraryQuery(items[0].libraryId)}`, { method: 'DELETE' })
+      else await request('/api/photos/bulk-delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, library: items[0].libraryId }) })
       setPhotos((current) => current.filter((photo) => !ids.includes(photo.id)))
       setSummary((current) => ({ total: Math.max(0, current.total - ids.length), totalBytes: Math.max(0, current.totalBytes - items.reduce((sum, photo) => sum + photo.size, 0)) }))
       setSelected(new Set())
@@ -391,7 +442,7 @@ export default function App() {
 
   const downloadOne = (photo) => {
     const link = document.createElement('a')
-    link.href = `/media/${photo.id}?download=1`
+    link.href = mediaUrl(photo, true)
     link.download = photo.name
     link.hidden = true
     document.body.appendChild(link)
@@ -427,25 +478,28 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar status={status} />
+      <Sidebar status={status} activeLibraryId={activeLibraryId} onSelectLibrary={selectLibrary} />
       <main className="main-area">
         <TopBar status={status} search={search} setSearch={setSearch} onRefresh={() => loadPhotos({ quiet: true })} refreshing={refreshing}
           onSelectAll={() => setSelected(new Set(photos.map((photo) => photo.id)))} hasPhotos={photos.length > 0} />
         <div className="content">
           <section className="page-heading">
             <div>
-              <p className="eyebrow">YOUR LIBRARY</p>
-              <h1>All photos</h1>
+              <p className="eyebrow">PHOTO SOURCE</p>
+              <h1>{activeLibrary?.name || 'All photos'}</h1>
               <p>{loading ? 'Looking through your library…' : `${summary.total.toLocaleString()} ${summary.total === 1 ? 'photo' : 'photos'} · ${formatBytes(summary.totalBytes)}`}</p>
             </div>
-            <label className="sort-control"><SlidersHorizontal size={16} /><span>Sort:</span><select value={sort} onChange={(event) => setSort(event.target.value)}>{SORTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select><ChevronDown size={15} /></label>
+            <div className="page-heading__controls">
+              <label className="source-control"><HardDrive size={15} /><select aria-label="Photo source" value={activeLibraryId} onChange={(event) => selectLibrary(event.target.value)}>{(status?.libraries || []).map((library) => <option key={library.id} value={library.id}>{library.name}</option>)}</select><ChevronDown size={15} /></label>
+              <label className="sort-control"><SlidersHorizontal size={16} /><span>Sort:</span><select value={sort} onChange={(event) => setSort(event.target.value)}>{SORTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select><ChevronDown size={15} /></label>
+            </div>
           </section>
           {loading ? (
             <div className="loading-state"><LoaderCircle className="spin" size={26} /><p>Gathering your photos…</p></div>
           ) : photos.length ? (
             <Gallery photos={photos} selected={selected} setSelected={setSelected} onOpen={setActive} onRename={setRenaming} onDelete={(photo) => setDeleting([photo])} onDownload={downloadOne} />
-          ) : <EmptyState configured={status?.configured} ready={status?.ready} searching={Boolean(search)} />}
-          <footer className="content-footer"><span><ShieldCheck size={14} /> Private to your home network</span><span>{status?.writable ? 'Library connected' : status?.configured ? 'Folder needs write access' : 'Setup required'} <i className={status?.writable ? 'online' : ''} /></span></footer>
+          ) : <EmptyState configured={status?.configured} ready={activeLibrary?.ready} searching={Boolean(search)} />}
+          <footer className="content-footer"><span><ShieldCheck size={14} /> Private to your home network</span><span>{activeLibrary?.writable ? 'Source connected' : activeLibrary ? 'Folder needs write access' : 'Setup required'} <i className={activeLibrary?.writable ? 'online' : ''} /></span></footer>
         </div>
       </main>
 

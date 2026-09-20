@@ -10,6 +10,7 @@ import sharp from 'sharp'
 import {
   decodePhotoId,
   fileExists,
+  librariesFromEnvironment,
   localNetworkHostName,
   listPhotos,
   mediaTypeFor,
@@ -24,7 +25,7 @@ dotenv.config()
 const app = express()
 const port = Number(process.env.PORT || 4173)
 const host = process.env.HOST || '0.0.0.0'
-const libraryPath = process.env.PHOTO_LIBRARY_PATH ? path.resolve(process.env.PHOTO_LIBRARY_PATH) : null
+const libraries = librariesFromEnvironment(process.env)
 const password = process.env.LIBRARY_PASSWORD || ''
 const authToken = password ? crypto.createHash('sha256').update(`lantern:${password}`).digest('hex') : ''
 const networkHostName = localNetworkHostName(os.hostname())
@@ -39,8 +40,15 @@ app.use((req, res, next) => {
 })
 
 function configured(req, res, next) {
-  if (!libraryPath) return res.status(503).json({ error: 'Photo folder is not configured. Run npm run setup on the Mac Mini.' })
+  if (!libraries.length) return res.status(503).json({ error: 'Photo folders are not configured. Run npm run setup on the Mac Mini.' })
   next()
+}
+
+function libraryForRequest(req) {
+  const requestedId = String(req.query.library || req.body?.library || '').trim()
+  const library = requestedId ? libraries.find((item) => item.id === requestedId) : libraries[0]
+  if (!library) throw new Error('Photo source not found')
+  return library
 }
 
 function authorized(req, res, next) {
@@ -60,19 +68,22 @@ function apiError(res, error, fallback = 'That action could not be completed') {
 }
 
 app.get('/api/status', async (_req, res) => {
-  let ready = false
-  let writable = false
-  if (libraryPath) {
+  const statuses = await Promise.all(libraries.map(async (library) => {
+    let ready = false
+    let writable = false
     try {
-      await fs.access(libraryPath)
+      await fs.access(library.path)
       ready = true
-      await fs.access(libraryPath, fsSync.constants.W_OK)
+      await fs.access(library.path, fsSync.constants.W_OK)
       writable = true
     } catch {}
-  }
+    return { id: library.id, name: library.name, ready, writable }
+  }))
+  const first = statuses[0]
   res.json({
-    configured: Boolean(libraryPath), ready, writable,
-    libraryName: libraryPath ? path.basename(libraryPath) : null,
+    configured: Boolean(libraries.length), ready: Boolean(first?.ready), writable: Boolean(first?.writable),
+    libraryName: first?.name || null,
+    libraries: statuses,
     protected: Boolean(password),
     hostName: networkHostName,
   })
@@ -95,10 +106,11 @@ app.use(['/api/photos', '/media'], authorized)
 
 app.get('/api/photos', configured, async (req, res) => {
   try {
+    const library = libraryForRequest(req)
     const query = String(req.query.search || '').trim().toLocaleLowerCase()
     const sort = ['name', 'size', 'modifiedAt'].includes(req.query.sort) ? req.query.sort : 'modifiedAt'
     const direction = req.query.order === 'asc' ? 1 : -1
-    let photos = await listPhotos(libraryPath)
+    let photos = (await listPhotos(library.path)).map((photo) => ({ ...photo, libraryId: library.id }))
     if (query) photos = photos.filter((photo) => `${photo.name} ${photo.folder}`.toLocaleLowerCase().includes(query))
     photos.sort((a, b) => {
       if (sort === 'name') return a.name.localeCompare(b.name, undefined, { numeric: true }) * direction
@@ -114,8 +126,9 @@ app.get('/api/photos', configured, async (req, res) => {
 
 app.get('/api/photos/:id/thumbnail', configured, async (req, res) => {
   try {
+    const library = libraryForRequest(req)
     const relativePath = decodePhotoId(req.params.id)
-    const filePath = resolveLibraryPath(libraryPath, relativePath)
+    const filePath = resolveLibraryPath(library.path, relativePath)
     const size = Math.min(Math.max(Number(req.query.size) || 640, 160), 1600)
     const stat = await fs.stat(filePath)
     res.setHeader('Content-Type', 'image/jpeg')
@@ -136,8 +149,9 @@ app.get('/api/photos/:id/thumbnail', configured, async (req, res) => {
 
 app.get('/media/:id', configured, async (req, res) => {
   try {
+    const library = libraryForRequest(req)
     const relativePath = decodePhotoId(req.params.id)
-    const filePath = resolveLibraryPath(libraryPath, relativePath)
+    const filePath = resolveLibraryPath(library.path, relativePath)
     const fileName = path.basename(relativePath)
     res.type(mediaTypeFor(path.extname(filePath)))
     if (req.query.download === '1') res.attachment(fileName)
@@ -149,15 +163,16 @@ app.get('/media/:id', configured, async (req, res) => {
 
 app.patch('/api/photos/:id', configured, async (req, res) => {
   try {
+    const library = libraryForRequest(req)
     const relativePath = decodePhotoId(req.params.id)
-    const source = resolveLibraryPath(libraryPath, relativePath)
+    const source = resolveLibraryPath(library.path, relativePath)
     const currentExtension = path.extname(source)
     const nextName = sanitizeNewName(req.body.name, currentExtension)
     const destination = path.join(path.dirname(source), nextName)
     if (destination !== source && await fileExists(destination)) throw new Error('A file with that name already exists')
     await fs.rename(source, destination)
     const stat = await fs.stat(destination)
-    res.json({ photo: photoRecord(path.relative(libraryPath, destination), stat) })
+    res.json({ photo: { ...photoRecord(path.relative(library.path, destination), stat), libraryId: library.id } })
   } catch (error) {
     apiError(res, error, 'The photo could not be renamed')
   }
@@ -165,8 +180,9 @@ app.patch('/api/photos/:id', configured, async (req, res) => {
 
 app.delete('/api/photos/:id', configured, async (req, res) => {
   try {
+    const library = libraryForRequest(req)
     const relativePath = decodePhotoId(req.params.id)
-    await moveToTrash(libraryPath, relativePath)
+    await moveToTrash(library.path, relativePath)
     res.status(204).end()
   } catch (error) {
     apiError(res, error, 'The photo could not be moved to Recently Deleted')
@@ -174,6 +190,12 @@ app.delete('/api/photos/:id', configured, async (req, res) => {
 })
 
 app.post('/api/photos/bulk-delete', configured, async (req, res) => {
+  let library
+  try {
+    library = libraryForRequest(req)
+  } catch (error) {
+    return apiError(res, error)
+  }
   const ids = Array.isArray(req.body.ids) ? req.body.ids.slice(0, 500) : []
   if (!ids.length) return res.status(400).json({ error: 'Choose at least one photo' })
   const deleted = []
@@ -181,7 +203,7 @@ app.post('/api/photos/bulk-delete', configured, async (req, res) => {
   for (const id of ids) {
     try {
       const relativePath = decodePhotoId(id)
-      await moveToTrash(libraryPath, relativePath)
+      await moveToTrash(library.path, relativePath)
       deleted.push(id)
     } catch {
       failed.push(id)
@@ -205,6 +227,6 @@ app.listen(port, host, (error) => {
   console.log(`\nLantern Photos is ready:`)
   console.log(`  This Mac:     http://localhost:${port}`)
   console.log(`  Home network: http://${networkHostName}:${port}`)
-  if (!libraryPath) console.log(`\nRun \"npm run setup\" to choose your photo folder.`)
-  else console.log(`  Photo folder: ${libraryPath}`)
+  if (!libraries.length) console.log(`\nRun \"npm run setup\" to choose your photo folders.`)
+  else libraries.forEach((library) => console.log(`  ${library.name}: ${library.path}`))
 })

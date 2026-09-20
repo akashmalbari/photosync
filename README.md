@@ -7,6 +7,7 @@ Lantern Photos turns a folder on your Mac Mini into a private, comfortable photo
 - Browses JPG, PNG, WebP, GIF, AVIF, HEIC/HEIF, and TIFF files, including subfolders
 - Creates fast browser-friendly previews without changing the originals
 - Searches, sorts, opens, renames, and downloads photos
+- Keeps multiple photo folders separate and lets you switch sources in the app
 - Downloads one or many photos as separate original-format files
 - Moves deleted photos to `.photo-vault-trash` instead of destroying them
 - Fits phones, tablets, laptops, and desktops
@@ -26,13 +27,19 @@ npm run build
 npm start
 ```
 
-During setup, drag your photo folder from Finder into the Terminal window and press Return. Keep that folder outside this repository so app updates never touch it.
+During setup, drag your first photo folder from Finder into the Terminal window and press Return. You can add two more folders, or press Return to finish. Keep those folders outside this repository so app updates never touch them.
 
 Open `http://localhost:4173` on the Mac Mini. From another device on the same network, open the home-network address printed when the app starts—usually something like `http://Your-Mac-Mini.local:4173`.
 
 On iPhone, downloading one selected photo saves that original file directly. When downloading several photos, Lantern sends each original separately; iOS may ask you to allow multiple downloads. The files appear in the browser's Downloads location and are never converted or bundled into a ZIP.
 
 The first time it runs, macOS may ask whether Node can accept incoming network connections. Choose **Allow**. If the photo folder is in a protected macOS location, approve the requested Files and Folders access as well.
+
+## Manage photo sources
+
+Run `npm run setup` whenever you want to replace the configured source list. Existing port, host, password, and custom source names are preserved. On a computer, switch sources in the left sidebar. On iPhone, use the source menu beside the sort menu.
+
+Lantern supports the first folder through `PHOTO_LIBRARY_PATH`, so existing installations remain compatible. Additional folders use `PHOTO_LIBRARY_PATH_2` and `PHOTO_LIBRARY_PATH_3` in `.env`. Their Finder folder names appear in the app by default; optional `PHOTO_LIBRARY_NAME`, `PHOTO_LIBRARY_NAME_2`, and `PHOTO_LIBRARY_NAME_3` values can provide friendlier labels. Each source keeps its own `.photo-vault-trash` recovery folder.
 
 ## Keep it running
 

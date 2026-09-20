@@ -8,6 +8,34 @@ export const IMAGE_EXTENSIONS = new Set([
 
 export const TRASH_FOLDER = '.photo-vault-trash'
 
+export function librariesFromEnvironment(environment = process.env) {
+  const keys = Object.keys(environment)
+    .filter((key) => key === 'PHOTO_LIBRARY_PATH' || /^PHOTO_LIBRARY_PATH_[2-9]\d*$/.test(key))
+    .sort((left, right) => {
+      const number = (key) => key === 'PHOTO_LIBRARY_PATH' ? 1 : Number(key.slice('PHOTO_LIBRARY_PATH_'.length))
+      return number(left) - number(right)
+    })
+  const seen = new Set()
+  const libraries = []
+
+  for (const key of keys) {
+    const value = String(environment[key] || '').trim()
+    if (!value) continue
+    const resolvedPath = path.resolve(value)
+    if (seen.has(resolvedPath)) continue
+    seen.add(resolvedPath)
+    const number = key === 'PHOTO_LIBRARY_PATH' ? 1 : Number(key.slice('PHOTO_LIBRARY_PATH_'.length))
+    const nameKey = number === 1 ? 'PHOTO_LIBRARY_NAME' : `PHOTO_LIBRARY_NAME_${number}`
+    libraries.push({
+      id: `source-${number}`,
+      name: String(environment[nameKey] || '').trim() || path.basename(resolvedPath),
+      path: resolvedPath,
+    })
+  }
+
+  return libraries
+}
+
 export function localNetworkHostName(hostName) {
   const base = String(hostName || 'localhost').replace(/(?:\.local)+\.?$/i, '')
   return `${base}.local`
