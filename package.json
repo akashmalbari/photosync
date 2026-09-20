@@ -1,0 +1,37 @@
+{
+  "name": "lantern-photos",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A calm, local-first photo library for your home network.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c green,cyan \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "node --watch src/server/index.mjs",
+    "dev:web": "vite --host 0.0.0.0",
+    "setup": "node scripts/setup.mjs",
+    "service:install": "node scripts/service.mjs install",
+    "service:remove": "node scripts/service.mjs remove",
+    "build": "vite build",
+    "start": "NODE_ENV=production node src/server/index.mjs",
+    "test": "node --test",
+    "check": "npm run test && npm run build"
+  },
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "compression": "^1.8.1",
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0",
+    "lucide-react": "^0.544.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "sharp": "^0.35.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.4",
+    "concurrently": "^9.2.1",
+    "vite": "^7.1.7"
+  }
+}

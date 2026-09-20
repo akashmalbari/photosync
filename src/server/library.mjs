@@ -1,0 +1,121 @@
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import crypto from 'node:crypto'
+
+export const IMAGE_EXTENSIONS = new Set([
+  '.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif', '.heic', '.heif', '.tif', '.tiff',
+])
+
+export const TRASH_FOLDER = '.photo-vault-trash'
+
+export function encodePhotoId(relativePath) {
+  return Buffer.from(relativePath, 'utf8').toString('base64url')
+}
+
+export function decodePhotoId(id) {
+  try {
+    return Buffer.from(id, 'base64url').toString('utf8')
+  } catch {
+    throw new Error('Invalid photo identifier')
+  }
+}
+
+export function isInside(root, candidate) {
+  const relative = path.relative(root, candidate)
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
+}
+
+export function resolveLibraryPath(root, relativePath) {
+  if (!relativePath || path.isAbsolute(relativePath) || relativePath.includes('\0')) {
+    throw new Error('Invalid photo path')
+  }
+  const resolvedRoot = path.resolve(root)
+  const resolved = path.resolve(resolvedRoot, relativePath)
+  if (!isInside(resolvedRoot, resolved)) throw new Error('Photo path is outside the library')
+  return resolved
+}
+
+export function sanitizeNewName(rawName, currentExtension = '') {
+  const name = String(rawName ?? '').trim().normalize('NFC')
+  if (!name || name === '.' || name === '..') throw new Error('Enter a file name')
+  if (name.length > 220) throw new Error('File name is too long')
+  if (/[\0/\\:]/.test(name)) throw new Error('File name cannot contain /, \\, or :')
+  if (name.startsWith('.')) throw new Error('File name cannot start with a dot')
+
+  const suppliedExtension = path.extname(name)
+  if (!suppliedExtension && currentExtension) return `${name}${currentExtension}`
+  if (currentExtension && suppliedExtension.toLowerCase() !== currentExtension.toLowerCase()) {
+    throw new Error(`Keep the ${currentExtension} file extension`)
+  }
+  return name
+}
+
+export function mediaTypeFor(extension) {
+  const types = {
+    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp',
+    '.gif': 'image/gif', '.avif': 'image/avif', '.heic': 'image/heic', '.heif': 'image/heif',
+    '.tif': 'image/tiff', '.tiff': 'image/tiff',
+  }
+  return types[extension.toLowerCase()] || 'application/octet-stream'
+}
+
+async function walk(folder, root, items, includeTrash = false) {
+  const entries = await fs.readdir(folder, { withFileTypes: true })
+  for (const entry of entries) {
+    if (entry.name.startsWith('.') && (!includeTrash || entry.name !== TRASH_FOLDER)) continue
+    const fullPath = path.join(folder, entry.name)
+    if (entry.isDirectory()) {
+      if (entry.name === TRASH_FOLDER && !includeTrash) continue
+      await walk(fullPath, root, items, includeTrash)
+      continue
+    }
+    if (!entry.isFile() || !IMAGE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue
+    const stat = await fs.stat(fullPath)
+    const relativePath = path.relative(root, fullPath)
+    items.push(photoRecord(relativePath, stat))
+  }
+}
+
+export function photoRecord(relativePath, stat) {
+  const name = path.basename(relativePath)
+  const folder = path.dirname(relativePath)
+  return {
+    id: encodePhotoId(relativePath),
+    name,
+    path: relativePath,
+    folder: folder === '.' ? '' : folder,
+    extension: path.extname(name).slice(1).toUpperCase(),
+    size: stat.size,
+    modifiedAt: stat.mtime.toISOString(),
+  }
+}
+
+export async function listPhotos(root) {
+  const items = []
+  await walk(root, root, items)
+  return items
+}
+
+export function uniqueTrashName(relativePath) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const token = crypto.randomBytes(3).toString('hex')
+  return `${stamp}__${token}__${path.basename(relativePath)}`
+}
+
+export async function moveToTrash(root, relativePath) {
+  const source = resolveLibraryPath(root, relativePath)
+  const trash = path.join(root, TRASH_FOLDER)
+  await fs.mkdir(trash, { recursive: true })
+  const destination = path.join(trash, uniqueTrashName(relativePath))
+  await fs.rename(source, destination)
+  return destination
+}
+
+export async function fileExists(filePath) {
+  try {
+    await fs.access(filePath)
+    return true
+  } catch {
+    return false
+  }
+}
