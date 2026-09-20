@@ -7,7 +7,6 @@ import express from 'express'
 import compression from 'compression'
 import dotenv from 'dotenv'
 import sharp from 'sharp'
-import archiver from 'archiver'
 import {
   decodePhotoId,
   fileExists,
@@ -189,24 +188,6 @@ app.post('/api/photos/bulk-delete', configured, async (req, res) => {
     }
   }
   res.json({ deleted, failed })
-})
-
-app.post('/api/photos/download-zip', configured, async (req, res) => {
-  const ids = Array.isArray(req.body.ids) ? req.body.ids.slice(0, 500) : []
-  if (!ids.length) return res.status(400).json({ error: 'Choose at least one photo' })
-  res.attachment(`lantern-photos-${new Date().toISOString().slice(0, 10)}.zip`)
-  res.type('application/zip')
-  const archive = archiver('zip', { zlib: { level: 5 } })
-  archive.on('error', () => res.destroy())
-  archive.pipe(res)
-  for (const id of ids) {
-    try {
-      const relativePath = decodePhotoId(id)
-      const filePath = resolveLibraryPath(libraryPath, relativePath)
-      archive.file(filePath, { name: relativePath })
-    } catch {}
-  }
-  await archive.finalize()
 })
 
 if (process.env.NODE_ENV === 'production') {

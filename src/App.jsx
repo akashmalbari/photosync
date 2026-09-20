@@ -273,12 +273,37 @@ function Unlock({ onUnlock }) {
   )
 }
 
-function BulkBar({ count, onCancel, onDownload, onDelete }) {
+function ExportDialog({ photos, onClose, onExport }) {
+  const totalSize = photos.reduce((sum, photo) => sum + photo.size, 0)
+  return (
+    <div className="modal-wrap" role="dialog" aria-modal="true" aria-labelledby="export-title">
+      <button className="modal-backdrop" onClick={onClose} aria-label="Close" />
+      <div className="modal">
+        <div className="modal__icon"><ArrowDownToLine size={21} /></div>
+        <h2 id="export-title">Download {photos.length} originals?</h2>
+        <p>
+          Each photo will be saved as its own original file ({formatBytes(totalSize)} total).
+          Your iPhone may ask you to allow multiple downloads.
+        </p>
+        <div className="export-list" aria-label="Files to download">
+          {photos.slice(0, 4).map((photo) => <span key={photo.id}>{photo.name}</span>)}
+          {photos.length > 4 && <span>and {photos.length - 4} more…</span>}
+        </div>
+        <div className="modal__actions">
+          <button onClick={onClose}>Cancel</button>
+          <button className="primary" onClick={onExport}>Download originals</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function BulkBar({ count, onCancel, onExport, onDelete }) {
   return (
     <div className="bulk-bar">
       <span><i><Check size={13} /></i> {count} selected</span>
       <div>
-        <button onClick={onDownload}><ArrowDownToLine size={17} /> Download</button>
+        <button onClick={onExport}><ArrowDownToLine size={17} /> Export</button>
         <button className="danger" onClick={onDelete}><Trash2 size={17} /> Delete</button>
         <button className="bulk-bar__close" onClick={onCancel} aria-label="Clear selection"><X size={18} /></button>
       </div>
@@ -296,6 +321,7 @@ export default function App() {
   const [active, setActive] = useState(null)
   const [renaming, setRenaming] = useState(null)
   const [deleting, setDeleting] = useState([])
+  const [exporting, setExporting] = useState([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [locked, setLocked] = useState(false)
@@ -367,21 +393,27 @@ export default function App() {
     const link = document.createElement('a')
     link.href = `/media/${photo.id}?download=1`
     link.download = photo.name
+    link.hidden = true
+    document.body.appendChild(link)
     link.click()
+    link.remove()
   }
 
-  const downloadSelected = async () => {
-    try {
-      showToast('Preparing your download…')
-      const response = await request('/api/photos/download-zip', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [...selected] }) })
-      const blob = await response.blob()
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `lantern-photos-${new Date().toISOString().slice(0, 10)}.zip`
-      link.click()
-      URL.revokeObjectURL(url)
-    } catch (error) { showToast(error.message, 'error') }
+  const exportSelected = () => {
+    if (selectedPhotos.length === 1) {
+      downloadOne(selectedPhotos[0])
+      setSelected(new Set())
+      return
+    }
+    setExporting(selectedPhotos)
+  }
+
+  const downloadOriginals = () => {
+    exporting.forEach((photo) => downloadOne(photo))
+    const count = exporting.length
+    setExporting([])
+    setSelected(new Set())
+    showToast(`${count} original files sent to your downloads`)
   }
 
   const selectedPhotos = useMemo(() => photos.filter((photo) => selected.has(photo.id)), [photos, selected])
@@ -417,10 +449,11 @@ export default function App() {
         </div>
       </main>
 
-      {selected.size > 0 && <BulkBar count={selected.size} onCancel={() => setSelected(new Set())} onDownload={downloadSelected} onDelete={() => setDeleting(selectedPhotos)} />}
+      {selected.size > 0 && <BulkBar count={selected.size} onCancel={() => setSelected(new Set())} onExport={exportSelected} onDelete={() => setDeleting(selectedPhotos)} />}
       {active && <DetailPanel photo={active} onClose={() => setActive(null)} onRename={setRenaming} onDelete={(photo) => setDeleting([photo])} onPrevious={() => moveActive(-1)} onNext={() => moveActive(1)} />}
       {renaming && <RenameDialog photo={renaming} onClose={() => setRenaming(null)} onSave={saveRename} />}
       {deleting.length > 0 && <DeleteDialog photos={deleting} onClose={() => setDeleting([])} onConfirm={confirmDelete} />}
+      {exporting.length > 0 && <ExportDialog photos={exporting} onClose={() => setExporting([])} onExport={downloadOriginals} />}
       {toast && <div className={`toast toast--${toast.tone}`}><span>{toast.tone === 'error' ? <X size={15} /> : <Check size={15} />}</span>{toast.message}</div>}
     </div>
   )

@@ -1,6 +1,6 @@
 {
   "name": "lantern-photos",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "A calm, local-first photo library for your home network.",
   "type": "module",
@@ -20,7 +20,6 @@
     "check": "npm run test && npm run build"
   },
   "dependencies": {
-    "archiver": "^7.0.1",
     "compression": "^1.8.1",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",

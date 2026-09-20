@@ -163,6 +163,8 @@ button { color: inherit; }
 .modal__actions .primary { border-color: var(--forest); background: var(--forest); color: white; }
 .modal__actions .danger-solid { border-color: var(--terracotta); background: var(--terracotta); color: white; }
 .modal__actions button:disabled { opacity: .55; cursor: default; }
+.export-list { max-height: 126px; overflow: auto; margin: -7px 0 2px; padding: 9px 11px; border: 1px solid #e1ddd4; border-radius: 8px; background: #faf8f3; }
+.export-list span { display: block; padding: 4px 0; overflow: hidden; color: #59615c; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 
 .toast { position: fixed; z-index: 100; right: 22px; bottom: 22px; max-width: min(360px, calc(100vw - 44px)); min-height: 45px; padding: 9px 15px 9px 9px; border: 1px solid rgba(255,255,255,.1); border-radius: 10px; background: #243e35; color: white; box-shadow: 0 12px 40px rgba(25,40,34,.25); display: flex; align-items: center; gap: 9px; font-size: 10px; animation: toast-in .25s ease-out; }
 .toast span { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 7px; background: rgba(255,255,255,.1); }
